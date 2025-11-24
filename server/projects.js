@@ -65,14 +65,24 @@ async function generateDisplayName(projectName, actualProjectDir = null) {
   return projectPath;
 }
 
+// Validate if a path actually exists
+async function isValidProjectPath(projectPath) {
+  try {
+    await fs.access(projectPath);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 // Extract the actual project directory from JSONL sessions (with caching)
 async function extractProjectDirectory(projectName) {
   // Check cache first
   if (projectDirectoryCache.has(projectName)) {
     return projectDirectoryCache.get(projectName);
   }
-  
-  
+
+
   const projectDir = path.join(process.env.HOME, '.gemini', 'projects', projectName);
   const cwdCounts = new Map();
   let latestTimestamp = 0;
@@ -213,15 +223,25 @@ async function getProjects() {
       if (entry.isDirectory()) {
         existingProjects.add(entry.name);
         const projectPath = path.join(geminiDir, entry.name);
-        
+
         // Extract actual project directory from JSONL sessions
         const actualProjectDir = await extractProjectDirectory(entry.name);
-        
+
+        // Validate the project path exists and doesn't contain invalid characters
+        const hasInvalidChars = /[^\x20-\x7E]/.test(actualProjectDir) || actualProjectDir.includes('?');
+        const pathExists = await isValidProjectPath(actualProjectDir);
+
+        // Skip projects with invalid paths
+        if (hasInvalidChars || !pathExists) {
+          console.warn(`Skipping invalid project: ${entry.name} (path: ${actualProjectDir})`);
+          continue;
+        }
+
         // Get display name from config or generate one
         const customName = config[entry.name]?.displayName;
         const autoDisplayName = await generateDisplayName(entry.name, actualProjectDir);
         const fullPath = actualProjectDir;
-        
+
         const project = {
           name: entry.name,
           path: actualProjectDir,
@@ -652,6 +672,46 @@ async function addProjectManually(projectPath, displayName = null) {
 }
 
 
+// Clean up invalid projects from the file system
+async function cleanupInvalidProjects() {
+  const geminiDir = path.join(process.env.HOME, '.gemini', 'projects');
+  let cleanedCount = 0;
+
+  try {
+    const entries = await fs.readdir(geminiDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const actualProjectDir = await extractProjectDirectory(entry.name);
+
+        // Check if path is invalid
+        const hasInvalidChars = /[^\x20-\x7E]/.test(actualProjectDir) || actualProjectDir.includes('?');
+        const pathExists = await isValidProjectPath(actualProjectDir);
+
+        if (hasInvalidChars || !pathExists) {
+          console.log(`Removing invalid project: ${entry.name} (path: ${actualProjectDir})`);
+
+          // Remove the project directory
+          const projectDir = path.join(geminiDir, entry.name);
+          await fs.rm(projectDir, { recursive: true, force: true });
+
+          // Remove from config
+          const config = await loadProjectConfig();
+          delete config[entry.name];
+          await saveProjectConfig(config);
+
+          cleanedCount++;
+        }
+      }
+    }
+
+    return { success: true, cleanedCount };
+  } catch (error) {
+    console.error('Error cleaning up invalid projects:', error);
+    return { success: false, error: error.message, cleanedCount };
+  }
+}
+
 export {
   getProjects,
   getSessions,
@@ -665,5 +725,7 @@ export {
   loadProjectConfig,
   saveProjectConfig,
   extractProjectDirectory,
-  clearProjectDirectoryCache
+  clearProjectDirectoryCache,
+  isValidProjectPath,
+  cleanupInvalidProjects
 };

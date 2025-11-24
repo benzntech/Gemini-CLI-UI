@@ -51,6 +51,20 @@ async function spawnGemini(command, options = {}, ws) {
     const cleanPath = (cwd || process.cwd()).replace(/[^\x20-\x7E]/g, '').trim();
     const workingDir = cleanPath;
     // Debug - workingDir
+
+    // Validate working directory exists before spawning
+    try {
+      await fs.access(workingDir);
+    } catch (error) {
+      const errorMsg = `Invalid working directory: ${workingDir} does not exist`;
+      console.error(errorMsg);
+      ws.send(JSON.stringify({
+        type: 'gemini-error',
+        error: errorMsg
+      }));
+      reject(new Error(errorMsg));
+      return;
+    }
     
     // Handle images by saving them to temporary files and passing paths to Gemini
     const tempImagePaths = [];

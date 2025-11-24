@@ -36,7 +36,7 @@ import pty from 'node-pty';
 import fetch from 'node-fetch';
 import mime from 'mime-types';
 
-import { getProjects, getSessions, getSessionMessages, renameProject, deleteSession, deleteProject, addProjectManually, extractProjectDirectory, clearProjectDirectoryCache } from './projects.js';
+import { getProjects, getSessions, getSessionMessages, renameProject, deleteSession, deleteProject, addProjectManually, extractProjectDirectory, clearProjectDirectoryCache, cleanupInvalidProjects } from './projects.js';
 import { spawnGemini, abortGeminiSession } from './gemini-cli.js';
 import sessionManager from './sessionManager.js';
 import gitRoutes from './routes/git.js';
@@ -270,15 +270,40 @@ app.delete('/api/projects/:projectName', authenticateToken, async (req, res) => 
 app.post('/api/projects/create', authenticateToken, async (req, res) => {
   try {
     const { path: projectPath } = req.body;
-    
+
     if (!projectPath || !projectPath.trim()) {
       return res.status(400).json({ error: 'Project path is required' });
     }
-    
+
     const project = await addProjectManually(projectPath.trim());
     res.json({ success: true, project });
   } catch (error) {
     // console.error('Error creating project:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Cleanup invalid projects endpoint
+app.post('/api/projects/cleanup', authenticateToken, async (req, res) => {
+  try {
+    console.log('🧹 Manual cleanup triggered...');
+    const result = await cleanupInvalidProjects();
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: `Removed ${result.cleanedCount} invalid project(s)`,
+        cleanedCount: result.cleanedCount
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        cleanedCount: result.cleanedCount
+      });
+    }
+  } catch (error) {
+    console.error('Error during project cleanup:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1005,10 +1030,21 @@ async function startServer() {
     // Initialize authentication database
     await initializeDatabase();
     // console.log('✅ Database initialization skipped (testing)');
-    
+
+    // Clean up invalid projects on startup
+    console.log('🧹 Cleaning up invalid Gemini projects...');
+    const cleanupResult = await cleanupInvalidProjects();
+    if (cleanupResult.success && cleanupResult.cleanedCount > 0) {
+      console.log(`✅ Removed ${cleanupResult.cleanedCount} invalid project(s)`);
+    } else if (cleanupResult.success) {
+      console.log('✅ No invalid projects found');
+    } else {
+      console.warn('⚠️ Project cleanup encountered errors:', cleanupResult.error);
+    }
+
     server.listen(PORT, '0.0.0.0', async () => {
       // console.log(`Gemini CLI UI server running on http://0.0.0.0:${PORT}`);
-      
+
       // Start watching the projects folder for changes
       await setupProjectsWatcher(); // Re-enabled with better-sqlite3
     });
