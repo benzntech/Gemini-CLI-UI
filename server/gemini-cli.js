@@ -193,7 +193,7 @@ async function spawnGemini(command, options = {}, ws) {
     
     // Add model for all sessions (both new and resumed)
     // Debug - Model from options and resume session
-    const modelToUse = options.model || 'gemini-2.5-flash';
+    const modelToUse = options.model || 'auto';
     // Debug - Using model
     args.push('--model', modelToUse);
     
